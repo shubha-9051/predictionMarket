@@ -19,15 +19,14 @@ func Lock(ctx context.Context, pool *pgxpool.Pool, userID int64, amount int64) e
 	defer tx.Rollback(ctx)
 
 	result, err := tx.Exec(ctx,
-		`UPDATE users SET available = available + $1, 
-		 locked = locked - $1 
-		 WHERE id = $2 AND lock >= $1`,
+		`UPDATE users SET available = available - $1, locked = locked + $1 
+		 WHERE id = $2 AND available >= $1`,
 		amount, userID)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("user %d not found", userID)
+		return fmt.Errorf("lock failed: user %d not found or insufficient available", userID)
 	}
 
 	_, err = tx.Exec(ctx,
