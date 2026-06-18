@@ -12,7 +12,6 @@ import (
 )
 
 func main() {
-	// 1. Get the connection string from an environment variable.
 	_ = godotenv.Load("../../.env")
 	connString := os.Getenv("DATABASE_URL")
 	if connString == "" {
@@ -20,7 +19,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 2. Create a connection pool.
 	pool, err := pgxpool.New(context.Background(), connString)
 	if err != nil {
 		fmt.Println("failed to create pool:", err)
@@ -28,7 +26,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 3. Run a trivial query to prove the connection works.
 	var result int
 	err = pool.QueryRow(context.Background(), "SELECT 1").Scan(&result)
 	if err != nil {
@@ -36,7 +33,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 4. Success.
 	fmt.Println("connected, SELECT 1 returned:", result)
 
 	err = ledger.Transfer(context.Background(), pool, 1, 2, 2)

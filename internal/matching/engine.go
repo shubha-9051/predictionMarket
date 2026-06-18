@@ -4,11 +4,16 @@ import "fmt"
 
 type Order struct {
 	ID         int64
+	UserID     int64
+	Outcome    string
 	Side       string
 	Price      int64
 	Quantity   int64
 	Remaining  int64
 	SequenceNo int64
+
+	NormSide  string
+	NormPrice int64
 }
 
 type Book struct {
@@ -21,6 +26,37 @@ type Fill struct {
 	RestingOrderID  int64
 	Price           int64
 	Quantity        int64
+	Type            string
+}
+
+const PairTotal = 1000
+
+func Normalize(o *Order) {
+	switch {
+	case o.Outcome == "YES" && o.Side == "buy":
+		o.NormSide = "buy"
+		o.NormPrice = o.Price
+
+	case o.Outcome == "YES" && o.Side == "sell":
+		o.NormSide = "sell"
+		o.NormPrice = o.Price
+
+	case o.Outcome == "NO" && o.Side == "buy":
+		o.NormSide = "sell"
+		o.NormPrice = PairTotal - o.Price
+
+	case o.Outcome == "NO" && o.Side == "sell":
+		o.NormSide = "buy"
+		o.NormPrice = PairTotal - o.Price
+	}
+}
+
+func IsMint(incoming, resting *Order) bool {
+	if incoming.Side == "buy" && resting.Side == "buy" &&
+		incoming.Outcome != resting.Outcome {
+		return true
+	}
+	return false
 }
 
 func NewBook() *Book {
@@ -31,13 +67,13 @@ func NewBook() *Book {
 }
 
 func (b *Book) Add(order Order) error {
-	switch order.Side {
+	switch order.NormSide {
 	case "buy":
-		b.bids[order.Price] = append(b.bids[order.Price], order)
+		b.bids[order.NormPrice] = append(b.bids[order.NormPrice], order)
 	case "sell":
-		b.asks[order.Price] = append(b.asks[order.Price], order)
+		b.asks[order.NormPrice] = append(b.asks[order.NormPrice], order)
 	default:
-		return fmt.Errorf("unknown side: %q", order.Side)
+		return fmt.Errorf("unknown norm side: %q", order.NormSide)
 	}
 	return nil
 }
@@ -72,47 +108,48 @@ func (b *Book) BestAsk() (int64, bool) {
 	return best, found
 }
 
-// matchOnce does ONE match: incoming order vs the single best opposing order.
-// It branches on the incoming side, because a buy matches asks and a sell matches bids.
 func (b *Book) matchOnce(incoming *Order) (Fill, bool) {
 	var restingPrice int64
 	var ok bool
 	var queue []Order
 	var oppositeSide map[int64][]Order
 
-	if incoming.Side == "buy" {
-		// buy matches against ASKS; cross when incoming.Price >= best ask
+	if incoming.NormSide == "buy" {
 		restingPrice, ok = b.BestAsk()
-		if !ok || incoming.Price < restingPrice {
+		if !ok || incoming.NormPrice < restingPrice {
 			return Fill{}, false
 		}
 		oppositeSide = b.asks
 	} else {
-		// sell matches against BIDS; cross when incoming.Price <= best bid
 		restingPrice, ok = b.BestBid()
-		if !ok || incoming.Price > restingPrice {
+		if !ok || incoming.NormPrice > restingPrice {
 			return Fill{}, false
 		}
 		oppositeSide = b.bids
 	}
 
 	queue = oppositeSide[restingPrice]
-	resting := &queue[0] // front of FIFO queue = oldest = time priority
+	resting := &queue[0]
 
 	tradeQty := min(incoming.Remaining, resting.Remaining)
 
+	fillType := "transfer"
+	if IsMint(incoming, resting) {
+		fillType = "mint"
+	}
 	fill := Fill{
 		IncomingOrderID: incoming.ID,
 		RestingOrderID:  resting.ID,
-		Price:           restingPrice, // trade at the RESTING order's price
+		Price:           restingPrice,
 		Quantity:        tradeQty,
+		Type:            fillType,
 	}
 
 	incoming.Remaining -= tradeQty
 	resting.Remaining -= tradeQty
 
 	if resting.Remaining == 0 {
-		oppositeSide[restingPrice] = queue[1:] // FIFO pop
+		oppositeSide[restingPrice] = queue[1:]
 	} else {
 		queue[0] = *resting
 		oppositeSide[restingPrice] = queue
@@ -122,6 +159,7 @@ func (b *Book) matchOnce(incoming *Order) (Fill, bool) {
 }
 
 func (b *Book) Match(incoming Order) []Fill {
+	Normalize(&incoming)
 	var fills []Fill
 	for incoming.Remaining > 0 {
 		fill, ok := b.matchOnce(&incoming)
@@ -131,7 +169,7 @@ func (b *Book) Match(incoming Order) []Fill {
 		fills = append(fills, fill)
 	}
 	if incoming.Remaining > 0 {
-		b.Add(incoming) // rest the unfilled remainder
+		b.Add(incoming)
 	}
 	return fills
 }

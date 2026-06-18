@@ -5,21 +5,17 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func Transfer(ctx context.Context, pool *pgxpool.Pool, fromUserID int64, toUserID int64, amount int64) error {
+func TransferTx(ctx context.Context, tx pgx.Tx, fromUserID int64, toUserID int64, amount int64) error {
 	if amount <= 0 {
 		return errors.New("amount must be positive")
 	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
 
 	result1, err := tx.Exec(ctx,
-		`UPDATE users SET locked = locked - $1 
+		`UPDATE users SET locked = locked - $1
 		 WHERE id = $2 AND locked >= $1`,
 		amount, fromUserID)
 
@@ -31,7 +27,7 @@ func Transfer(ctx context.Context, pool *pgxpool.Pool, fromUserID int64, toUserI
 	}
 
 	result2, err := tx.Exec(ctx,
-		`UPDATE users SET available = available + $1 
+		`UPDATE users SET available = available + $1
 		 WHERE id = $2 `,
 		amount, toUserID)
 
@@ -55,9 +51,19 @@ func Transfer(ctx context.Context, pool *pgxpool.Pool, fromUserID int64, toUserI
 		return err
 	}
 
-	err = tx.Commit(ctx)
+	return nil
+}
+
+func Transfer(ctx context.Context, pool *pgxpool.Pool, fromUserID int64, toUserID int64, amount int64) error {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	return nil
+	defer tx.Rollback(ctx)
+
+	if err := TransferTx(ctx, tx, fromUserID, toUserID, amount); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }

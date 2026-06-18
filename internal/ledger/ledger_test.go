@@ -21,10 +21,8 @@ func TestConservation(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// hardcoded existing users — no new users created
 	userIDs := []int64{58, 59, 60, 61, 62}
 
-	// baseline: money already present in these users before the loop
 	var baseline int64
 	err = pool.QueryRow(ctx,
 		"SELECT COALESCE(SUM(available + locked), 0) FROM users WHERE id = ANY($1)",
@@ -41,7 +39,7 @@ func TestConservation(t *testing.T) {
 		op := rand.Intn(4)
 
 		switch op {
-		case 0: // DEPOSIT
+		case 0:
 			id := userIDs[rand.Intn(len(userIDs))]
 			amount := int64(rand.Intn(1000) + 1)
 			if err := Deposit(ctx, pool, id, amount); err != nil {
@@ -50,7 +48,7 @@ func TestConservation(t *testing.T) {
 			expectedTotal += amount
 			nDeposit++
 
-		case 1: // LOCK within available
+		case 1:
 			id := userIDs[rand.Intn(len(userIDs))]
 			nLockTried++
 			var avail int64
@@ -63,7 +61,7 @@ func TestConservation(t *testing.T) {
 				_ = Lock(ctx, pool, id, rand.Int63n(avail)+1)
 			}
 
-		case 2: // RELEASE within locked
+		case 2:
 			id := userIDs[rand.Intn(len(userIDs))]
 			nRelTried++
 			var locked int64
@@ -76,7 +74,7 @@ func TestConservation(t *testing.T) {
 				_ = Release(ctx, pool, id, rand.Int63n(locked)+1)
 			}
 
-		case 3: // TRANSFER sender's locked → another user
+		case 3:
 			from := userIDs[rand.Intn(len(userIDs))]
 			to := userIDs[rand.Intn(len(userIDs))]
 			if from == to {
@@ -94,7 +92,6 @@ func TestConservation(t *testing.T) {
 			}
 		}
 
-		// invariant check, every iteration (scoped to our users)
 		var actualTotal int64
 		if err := pool.QueryRow(ctx,
 			"SELECT COALESCE(SUM(available + locked), 0) FROM users WHERE id = ANY($1)",
